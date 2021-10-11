@@ -1,0 +1,4 @@
+datapackage
+deriva
+pandas
+sqlalchemy
