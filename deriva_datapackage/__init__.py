@@ -8,6 +8,7 @@ import os
 import json
 import sqlalchemy as sa
 import sqlalchemy.orm as sa_orm
+import pandas as pd
 from pandas.io.sql import to_sql
 
 class DerivaCompat:
@@ -178,25 +179,59 @@ class DerivaCompatTable(DerivaCompat):
     return self._as_query().count()
 
 class DerivaCompatPkg:
-  def __init__(self, data, cachedir='.cached'):
+  def __init__(self, *pkgs, cachedir='.cached'):
     self.tables = {}
     # check_same_thread is safe here given that we don't ever write after init
     os.makedirs(cachedir, exist_ok=True)
     self._engine = sa.create_engine(f"sqlite:///{cachedir.rstrip('/')}/datapackage.sqlite")
     # load data into sqlite
     with self._engine.connect() as con:
-      for resource_name, resource in data.items():
+      rcs = {}
+      for pkg in pkgs:
+        for resource in map(format_patch, pkg.resources):
+          if resource.name not in rcs:
+            rcs[resource.name] = {'schema': resource.descriptor['schema'], 'rcs': []}
+          rcs[resource.name]['rcs'].append(resource)
+      #
+      for resource_name, resource in rcs.items():
+        # TODO: read csv record stream directly into sqlite for minimal memory usage
+        # read data from all sources
+        try:
+          raw_data = [record for resource in resource['rcs'] for record in resource.read(keyed=True)]
+        except Exception as e:
+          print(f"datapackage exception while reading from table: '{resource_name}'")
+          print(e.errors)
+          raise e
+        # load data into pandas
+        empty = not raw_data
+        if not empty:
+          data = pd.DataFrame(raw_data)[[field['name'] for field in resource['schema']['fields']]]
+        else:
+          data = pd.DataFrame([], columns=[field['name'] for field in resource['schema']['fields']])
+        # raw data no longer required
+        del raw_data
+        # convert fields according to schema
+        for field in resource['schema']['fields']:
+          if field['type'] == 'datetime':
+            data[field['name']] = pd.to_datetime(data[field['name']], utc=True)
+          elif field['type'] in {'array', 'object'}:
+            data[field['name']] = data[field['name']].apply(json.dumps)
+        # set index to primaryKey
+        if not empty:
+          data.set_index(resource['schema']['primaryKey'], inplace=True)
+        # load into database
         to_sql(
-          resource['data'].set_index(resource['schema']['primaryKey']) if resource['data'].shape[0] > 0 else resource['data'],
+          data,
           name=resource_name,
           con=con,
           if_exists='replace',
           index=True,
-          index_label=resource['schema']['primaryKey'] if resource['data'].shape[0] > 0 else None,
+          index_label=resource['schema']['primaryKey'] if not empty else None,
         )
-        # TODO: add fk constraints?
-        # index table
-        if resource['data'].shape[0] > 0:
+        # parsed data no longer required
+        del data
+        if not empty:
+          # build indexes for table
           pks = [resource['schema']['primaryKey']] if type(resource['schema']['primaryKey']) != list else resource['schema']['primaryKey']
           con.execute(f'''
             create index if not exists {'_'.join(['idx', resource_name, *pks])}
@@ -250,36 +285,8 @@ def format_patch(rc):
 def create_offline_client(*paths, cachedir='.cached'):
   ''' Establish an offline client for more up to date assessments than those published
   '''
-  import pandas as pd
   from datapackage import DataPackage
-  all_pkgs = {}
-  for path in paths:
-    pkg = DataPackage(path)
-    for resource in map(format_patch, pkg.resources):
-      if resource.name not in all_pkgs:
-        all_pkgs[resource.name] = {'schema': resource.descriptor['schema'], 'data': []}
-      #
-      try:
-        all_pkgs[resource.name]['data'] += resource.read(keyed=True)
-      except Exception as e:
-        print(f"datapackage exception while reading from table: '{resource.name}'")
-        print(e.errors)
-        raise e
-  #
-  joined_pkgs = {}
-  for resource_name, resource in all_pkgs.items():
-    if resource['data']:
-      data = pd.DataFrame(resource['data'])
-    else:
-      data = pd.DataFrame([], columns=[field['name'] for field in resource['schema']['fields']])
-    #
-    for field in resource['schema']['fields']:
-        if field['type'] == 'datetime':
-            data[field['name']] = pd.to_datetime(data[field['name']], utc=True)
-        elif field['type'] in {'array', 'object'}:
-            data[field['name']] = data[field['name']].apply(json.dumps)
-    joined_pkgs[resource_name] = dict(resource, data=data)
-  return DerivaCompatPkg(joined_pkgs, cachedir=cachedir)
+  return DerivaCompatPkg(*[DataPackage(path) for path in paths], cachedir=cachedir)
 
 def create_online_client(uri):
   ''' Create a client to access the public Deriva Catalog
