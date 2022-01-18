@@ -166,20 +166,28 @@ class DerivaCompatTable(DerivaCompat):
       lambda qs, _query=self._qs: _query(qs)
     )
   #
+  def _iter(self, iterable):
+    if self._pkg._progress_bar:
+      from tqdm import tqdm
+      return tqdm(iterable)
+    else:
+      return iterable
+  #
   def link(self, other, on, join_type='left'):
     return self._as_query().link(other, on, join_type=join_type)
   #
   def filter(self, selector):
-    return self._as_query().filter(selector)
+    return self._iter(self._as_query().filter(selector))
   #
   def entities(self):
-    return self._as_query().entities()
+    return self._iter(self._as_query().entities())
   #
   def count(self):
     return self._as_query().count()
 
 class DerivaCompatPkg:
-  def __init__(self, *pkgs, cachedir='.cached'):
+  def __init__(self, *pkgs, cachedir='.cached', progress_bar=False):
+    self._progress_bar = progress_bar
     self.tables = {}
     # check_same_thread is safe here given that we don't ever write after init
     os.makedirs(cachedir, exist_ok=True)
@@ -282,11 +290,11 @@ def format_patch(rc):
   #
   return rc
 
-def create_offline_client(*paths, cachedir='.cached'):
+def create_offline_client(*paths, cachedir='.cached', progress_bar=False):
   ''' Establish an offline client for more up to date assessments than those published
   '''
   from datapackage import DataPackage
-  return DerivaCompatPkg(*[DataPackage(path) for path in paths], cachedir=cachedir)
+  return DerivaCompatPkg(*[DataPackage(path) for path in paths], cachedir=cachedir, progress_bar=progress_bar)
 
 def create_online_client(uri):
   ''' Create a client to access the public Deriva Catalog
