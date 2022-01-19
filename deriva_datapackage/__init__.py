@@ -166,21 +166,18 @@ class DerivaCompatTable(DerivaCompat):
       lambda qs, _query=self._qs: _query(qs)
     )
   #
-  def _iter(self, iterable):
-    if self._pkg._progress_bar:
-      from tqdm import tqdm
-      return tqdm(iterable)
-    else:
-      return iterable
-  #
   def link(self, other, on, join_type='left'):
     return self._as_query().link(other, on, join_type=join_type)
   #
   def filter(self, selector):
-    return self._iter(self._as_query().filter(selector))
+    return self._as_query().filter(selector)
   #
   def entities(self):
-    return self._iter(self._as_query().entities())
+    if self._pkg._progress_bar:
+      from tqdm import tqdm
+      return tqdm(self._as_query().entities())
+    else:
+      return self._as_query().entities()
   #
   def count(self):
     return self._as_query().count()
