@@ -221,6 +221,8 @@ class DerivaCompatPkg:
             data[field['name']] = pd.to_datetime(data[field['name']], utc=True)
           elif field['type'] in {'array', 'object'}:
             data[field['name']] = data[field['name']].apply(json.dumps)
+          elif field['type'] == 'number':
+            data[field['name']] = data[field['name']].astype('float64')
         # set index to primaryKey
         if not empty:
           data.set_index(resource['schema']['primaryKey'], inplace=True)
