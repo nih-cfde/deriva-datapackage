@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
   name='deriva-datapackage',
-  version='1.0.4',
+  version='1.0.5',
   url='https://github.com/nih-cfde/',
   author='Daniel J. B. Clarke',
   author_email='danieljbclarkemssm@gmail.com',
