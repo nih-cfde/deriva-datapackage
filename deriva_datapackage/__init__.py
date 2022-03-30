@@ -202,7 +202,7 @@ class DerivaCompatPkg:
         # TODO: read csv record stream directly into sqlite for minimal memory usage
         # read data from all sources
         try:
-          raw_data = [record for resource in resource['rcs'] for record in resource.read(keyed=True)]
+          raw_data = [record for rc in resource['rcs'] for record in rc.read(keyed=True)]
         except Exception as e:
           print(f"datapackage exception while reading from table: '{resource_name}'")
           print(e.errors)
