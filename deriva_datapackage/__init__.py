@@ -283,7 +283,7 @@ def format_patch(rc):
       'header': True,
     }
     rc.commit()
-  elif 'format' not in rc.descriptor:
+  elif 'format' not in rc.descriptor and 'dialect' not in rc.descriptor:
     rc.descriptor['format'] = None
     rc.commit()
   #
