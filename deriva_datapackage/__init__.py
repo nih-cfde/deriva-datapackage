@@ -218,7 +218,7 @@ class DerivaCompatPkg:
         # convert fields according to schema
         for field in resource['schema']['fields']:
           if field['type'] == 'datetime':
-            data[field['name']] = pd.to_datetime(data[field['name']], utc=True)
+            data[field['name']] = pd.to_datetime(data[field['name']], utc=True, errors='coerce')
           elif field['type'] in {'array', 'object'}:
             data[field['name']] = data[field['name']].apply(json.dumps)
           elif field['type'] == 'number':
