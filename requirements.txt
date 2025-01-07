@@ -1,4 +1,3 @@
-datapackage
 deriva
-pandas
+frictionless
 sqlalchemy

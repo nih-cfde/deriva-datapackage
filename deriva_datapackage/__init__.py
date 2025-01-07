@@ -5,11 +5,8 @@ a local sqlalchemy database.
 '''
 
 import os
-import json
 import sqlalchemy as sa
 import sqlalchemy.orm as sa_orm
-import pandas as pd
-from pandas.io.sql import to_sql
 
 class DerivaCompat:
   def __call__(self):
@@ -188,68 +185,10 @@ class DerivaCompatPkg:
     self.tables = {}
     # check_same_thread is safe here given that we don't ever write after init
     os.makedirs(cachedir, exist_ok=True)
-    self._engine = sa.create_engine(f"sqlite:///{cachedir.rstrip('/')}/datapackage.sqlite")
+    db = f"sqlite:///{cachedir.rstrip('/')}/datapackage.sqlite"
     # load data into sqlite
-    with self._engine.connect() as con:
-      rcs = {}
-      for pkg in pkgs:
-        for resource in map(format_patch, pkg.resources):
-          if resource.name not in rcs:
-            rcs[resource.name] = {'schema': resource.descriptor['schema'], 'rcs': []}
-          rcs[resource.name]['rcs'].append(resource)
-      #
-      for resource_name, resource in rcs.items():
-        # TODO: read csv record stream directly into sqlite for minimal memory usage
-        # read data from all sources
-        try:
-          raw_data = [record for rc in resource['rcs'] for record in rc.read(keyed=True)]
-        except Exception as e:
-          print(f"datapackage exception while reading from table: '{resource_name}'")
-          print(e.errors)
-          raise e
-        # load data into pandas
-        empty = not raw_data
-        if not empty:
-          data = pd.DataFrame(raw_data)[[field['name'] for field in resource['schema']['fields']]]
-        else:
-          data = pd.DataFrame([], columns=[field['name'] for field in resource['schema']['fields']])
-        # raw data no longer required
-        del raw_data
-        # convert fields according to schema
-        for field in resource['schema']['fields']:
-          if field['type'] == 'datetime':
-            data[field['name']] = pd.to_datetime(data[field['name']], utc=True, errors='coerce')
-          elif field['type'] in {'array', 'object'}:
-            data[field['name']] = data[field['name']].apply(json.dumps)
-          elif field['type'] == 'number':
-            data[field['name']] = data[field['name']].astype('float64')
-        # set index to primaryKey
-        if not empty:
-          data.set_index(resource['schema']['primaryKey'], inplace=True)
-        # load into database
-        to_sql(
-          data,
-          name=resource_name,
-          con=con,
-          if_exists='replace',
-          index=True,
-          index_label=resource['schema']['primaryKey'] if not empty else None,
-        )
-        # parsed data no longer required
-        del data
-        if not empty:
-          # build indexes for table
-          pks = [resource['schema']['primaryKey']] if type(resource['schema']['primaryKey']) != list else resource['schema']['primaryKey']
-          con.execute(f'''
-            create index if not exists {'_'.join(['idx', resource_name, *pks])}
-            on {resource_name} ({', '.join(pks)});
-          ''')
-          for foreignKeys in resource['schema'].get('foreignKeys', []):
-            fields = [foreignKeys['fields']] if type(foreignKeys['fields']) != list else foreignKeys['fields']
-            con.execute(f'''
-              create index if not exists {'_'.join(['idx', resource_name, *fields])}
-              on {resource_name} ({', '.join(fields)});
-            ''')
+    for pkg in pkgs: pkg.index(db)
+    self._engine = sa.create_engine(db)
     # auto-load schema into sqlalchemy metadata
     self._metadata = sa.MetaData()
     self._metadata.reflect(bind=self._engine)
@@ -271,29 +210,11 @@ def DERIVA_col_in(qs, col, arr):
       f = f | (col == el)
   return qs if f is None else qs.filter(f)
 
-def format_patch(rc):
-  ''' Patch dialect for resource
-  '''
-  if rc.descriptor['path'].endswith('.tsv') and 'dialect' not in rc.descriptor:
-    rc.descriptor['dialect'] = {
-      'delimiter': '\t',
-      'doubleQuote': False,
-      'lineTerminator': '\n',
-      'skipInitialSpace': True,
-      'header': True,
-    }
-    rc.commit()
-  elif 'format' not in rc.descriptor and 'dialect' not in rc.descriptor:
-    rc.descriptor['format'] = None
-    rc.commit()
-  #
-  return rc
-
 def create_offline_client(*paths, cachedir='.cached', progress_bar=False):
   ''' Establish an offline client for more up to date assessments than those published
   '''
-  from datapackage import DataPackage
-  return DerivaCompatPkg(*[DataPackage(path) for path in paths], cachedir=cachedir, progress_bar=progress_bar)
+  from frictionless import Package
+  return DerivaCompatPkg(*[Package(path) for path in paths], cachedir=cachedir, progress_bar=progress_bar)
 
 def create_online_client(uri):
   ''' Create a client to access the public Deriva Catalog
